@@ -29,7 +29,8 @@ static cl::extrahelp MoreHelp("\nMore help text...\n");
 
 
 
-#define TARGET_FUNCTION_NAME "addFive"
+//#define TARGET_FUNCTION_NAME "addFive"
+#define TARGET_FUNCTION_NAME "process_vm_rw"
 
 class FindNamedClassVisitor
   : public RecursiveASTVisitor<FindNamedClassVisitor> {
@@ -53,6 +54,9 @@ public:
     auto Body = CurrentStmt;
     for (Stmt::child_iterator it = Body->child_begin(); it != Body->child_end(); it++){
       Stmt *child = *it;
+      llvm::outs() << "Debuging" << "\n";
+      child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+      llvm::outs() << "\n";
       //if (child->getStmtClass() == Stmt::DeclRefExprClass){
       if (isa<DeclRefExpr>(child)){
         //getReductionInit
@@ -68,12 +72,29 @@ public:
           FunctionQuene.push(FD);
         }
         else{
-          auto *VarD = dyn_cast<VarDecl>(VD);
-          if(VarD->hasGlobalStorage()){
-            llvm::outs() << "[+]Global Variable" << "\n";
-            llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
-            child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
-            llvm::outs() << "\n";
+          auto CurrentKind = VD->getKind();
+          llvm::outs() << "[+]Kind:" << "\n";
+          llvm::outs() << CurrentKind << "\n";
+          llvm::outs() << VD->getDeclKindName() << "\n";
+          switch(CurrentKind){
+            case 65: //EnumConstant
+              llvm::outs() << "[+]EnumConstant:" << "\n";
+              llvm::outs() << VD->getNameAsString() << "\n";
+              llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
+              child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+              llvm::outs() << "\n";
+            break;
+            default:
+              auto *VarD = dyn_cast<VarDecl>(VD);
+              llvm::outs() << "[+]DeclName:" << "\n";
+              llvm::outs() << VD->getDeclKindName() << "\n";
+              if(VarD->hasGlobalStorage()){
+                llvm::outs() << "[+]Global Variable" << "\n";
+                llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
+                child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+                llvm::outs() << "\n";
+              }
+            break;
           }
         }
       }
@@ -82,6 +103,39 @@ public:
 
     return true;
   }
+  //bool MyFunctionStmtVisitor(Stmt *CurrentStmt)
+  //{
+  //  auto Body = CurrentStmt;
+  //  for (Stmt::child_iterator it = Body->child_begin(); it != Body->child_end(); it++){
+  //    Stmt *child = *it;
+  //    //if (child->getStmtClass() == Stmt::DeclRefExprClass){
+  //    if (isa<DeclRefExpr>(child)){
+  //      //getReductionInit
+  //      auto *DRE = dyn_cast<DeclRefExpr>(child);
+  //      ValueDecl *VD = DRE->getDecl();
+  //      auto *VarD = dyn_cast<VarDecl>(VD);
+  //      bool isGlobal = VarD->hasGlobalStorage();
+  //      if(isGlobal){
+  //        llvm::outs() << "[+]name: " << DRE->getNameInfo().getAsString() << "\n";
+  //        child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+  //        llvm::outs() << "\n";
+  //        bool isFunction = VD->getType()->isFunctionType();
+  //        if(isFunction){
+  //          llvm::outs() << "Function" << "\n\n";
+  //          auto *FD =  dyn_cast<FunctionDecl>(VD);
+  //          FunctionQuene.push(FD);
+  //        }
+  //        else{
+  //          llvm::outs() << "Global Variable" << "\n\n";
+  //        }
+//
+  //      }
+  //    }
+  //    MyFunctionStmtVisitor(*it);
+  //  }
+//
+  //  return true;
+  //}
 
   bool MyFunctionDeclTraversal(){
     while(!FunctionQuene.empty()){
@@ -91,9 +145,13 @@ public:
       auto FoundPos = FunctionNameSet.find(CurrentName);
       if(FoundPos == FunctionNameSet.end()){
         FunctionNameSet.insert(CurrentName);
-        llvm::outs() << "[+]Checking function " << CurrentName << "\n";
-        auto Body = CurrentFunction->getDefinition()->getBody();
-        MyFunctionStmtVisitor(Body);
+        llvm::outs() << "\n[+]Checking function " << CurrentName << "\n";
+        auto CurrenctFunctionDecl = CurrentFunction->getDefinition();
+        if (CurrenctFunctionDecl){
+          if(CurrenctFunctionDecl->hasBody()){
+            MyFunctionStmtVisitor(CurrenctFunctionDecl->getBody());
+          }
+        }
       }
       else{
         llvm::outs() << "[+]" << CurrentName << " has been checked" << "\n";
