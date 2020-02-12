@@ -151,6 +151,13 @@ public:
           if(CurrenctFunctionDecl->hasBody()){
             MyFunctionStmtVisitor(CurrenctFunctionDecl->getBody());
           }
+          else{
+
+          llvm::outs() << "[-]" << CurrentName << " has null Body" << "\n";
+          }
+        }
+        else{
+          llvm::outs() << "[-]" << CurrentName << " has null declaration" << "\n";
         }
       }
       else{
