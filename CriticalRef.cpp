@@ -9,6 +9,7 @@
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Tooling/Tooling.h"
 
+#include <queue>
 using namespace clang;
 using namespace clang::tooling;
 using namespace llvm;
@@ -27,6 +28,9 @@ static cl::extrahelp MoreHelp("\nMore help text...\n");
 
 
 
+
+#define TARGET_FUNCTION_NAME "addFive"
+
 class FindNamedClassVisitor
   : public RecursiveASTVisitor<FindNamedClassVisitor> {
 public:
@@ -34,9 +38,9 @@ public:
     : Context(Context) {}
 
   bool VisitFunctionDecl(FunctionDecl *CurrentFunction) {
-    if (CurrentFunction->getDeclName().getAsString() == "addFive"){
-      auto Body = CurrentFunction->getDefinition()->getBody();
-      MyFunctionStmtVisitor(Body);
+    if (CurrentFunction->getDeclName().getAsString() == TARGET_FUNCTION_NAME){
+      FunctionQuene.push(CurrentFunction);
+      MyFunctionDeclTraversal();
       return false;
     }
     else{
@@ -56,18 +60,20 @@ public:
         ValueDecl *VD = DRE->getDecl();
         bool isFunction = VD->getType()->isFunctionType();
         if(isFunction){
-          llvm::outs() << "class name: " << child->getStmtClassName() << "\n";
+          auto *FD =  dyn_cast<FunctionDecl>(VD);
+          llvm::outs() << "[+]Function" << "\n";
           llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
           child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
           llvm::outs() << "\n";
+          FunctionQuene.push(FD);
         }
         else{
           auto *VarD = dyn_cast<VarDecl>(VD);
           if(VarD->hasGlobalStorage()){
-          llvm::outs() << "class name: " << child->getStmtClassName() << "\n";
-          llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
-          child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
-          llvm::outs() << "\n";
+            llvm::outs() << "[+]Global Variable" << "\n";
+            llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
+            child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+            llvm::outs() << "\n";
           }
         }
       }
@@ -77,8 +83,29 @@ public:
     return true;
   }
 
-private:
-  bool Found = false;
+  bool MyFunctionDeclTraversal(){
+    while(!FunctionQuene.empty()){
+      FunctionDecl *CurrentFunction = FunctionQuene.front();
+      FunctionQuene.pop();
+      auto CurrentName = CurrentFunction->getDeclName().getAsString();
+      auto FoundPos = FunctionNameSet.find(CurrentName);
+      if(FoundPos == FunctionNameSet.end()){
+        FunctionNameSet.insert(CurrentName);
+        llvm::outs() << "[+]Checking function " << CurrentName << "\n";
+        auto Body = CurrentFunction->getDefinition()->getBody();
+        MyFunctionStmtVisitor(Body);
+      }
+      else{
+        llvm::outs() << "[+]" << CurrentName << " has been checked" << "\n";
+      }
+    }
+    return true;
+  }
+
+protected:
+// are there more than one instance of FindNamedClassVisitor? 
+  std::queue<FunctionDecl *> FunctionQuene;
+  std::set<std::__cxx11::string> FunctionNameSet;
 
 private:
   ASTContext *Context;
@@ -112,5 +139,6 @@ int main(int argc, const char **argv) {
   CommonOptionsParser OptionsParser(argc, argv, MyToolCategory);
   ClangTool Tool(OptionsParser.getCompilations(),
                  OptionsParser.getSourcePathList());
+
   return Tool.run(newFrontendActionFactory<FindNamedClassAction>().get());
 }
