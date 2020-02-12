@@ -49,9 +49,28 @@ public:
     auto Body = CurrentStmt;
     for (Stmt::child_iterator it = Body->child_begin(); it != Body->child_end(); it++){
       Stmt *child = *it;
-      llvm::outs() << "\n" << child->getStmtClassName() << "\n";
-      child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
-      llvm::outs() << "\n";
+      //if (child->getStmtClass() == Stmt::DeclRefExprClass){
+      if (isa<DeclRefExpr>(child)){
+        //getReductionInit
+        auto *DRE = dyn_cast<DeclRefExpr>(child);
+        ValueDecl *VD = DRE->getDecl();
+        bool isFunction = VD->getType()->isFunctionType();
+        if(isFunction){
+          llvm::outs() << "class name: " << child->getStmtClassName() << "\n";
+          llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
+          child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+          llvm::outs() << "\n";
+        }
+        else{
+          auto *VarD = dyn_cast<VarDecl>(VD);
+          if(VarD->hasGlobalStorage()){
+          llvm::outs() << "class name: " << child->getStmtClassName() << "\n";
+          llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
+          child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+          llvm::outs() << "\n";
+          }
+        }
+      }
       MyFunctionStmtVisitor(*it);
     }
 
@@ -94,7 +113,4 @@ int main(int argc, const char **argv) {
   ClangTool Tool(OptionsParser.getCompilations(),
                  OptionsParser.getSourcePathList());
   return Tool.run(newFrontendActionFactory<FindNamedClassAction>().get());
-  // if (argc > 1) {
-  //   clang::tooling::runToolOnCode(std::make_unique<FindNamedClassAction>().get(), argv[1]);
-  // }
 }

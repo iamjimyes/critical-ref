@@ -1,2 +1,4 @@
 # critical-ref
-a clang tool
+a clang tool parsing all global variables and function calls.
+## TODO
+use VarDecl Straightly
