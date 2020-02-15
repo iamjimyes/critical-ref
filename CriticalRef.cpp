@@ -37,8 +37,9 @@ class FindNamedClassVisitor
 public:
   explicit FindNamedClassVisitor(ASTContext *Context)
     : Context(Context) {}
-
+  
   bool VisitFunctionDecl(FunctionDecl *CurrentFunction) {
+    Context->file
     if (CurrentFunction->getDeclName().getAsString() == TARGET_FUNCTION_NAME){
       FunctionQuene.push(CurrentFunction);
       MyFunctionDeclTraversal();
@@ -146,10 +147,10 @@ public:
       if(FoundPos == FunctionNameSet.end()){
         FunctionNameSet.insert(CurrentName);
         llvm::outs() << "\n[+]Checking function " << CurrentName << "\n";
-        auto CurrenctFunctionDecl = CurrentFunction->getDefinition();
-        if (CurrenctFunctionDecl){
-          if(CurrenctFunctionDecl->hasBody()){
-            MyFunctionStmtVisitor(CurrenctFunctionDecl->getBody());
+        auto CurrenctFunctionDef = CurrentFunction->getDefinition();
+        if (CurrenctFunctionDef){
+          if(CurrenctFunctionDef->hasBody()){
+            MyFunctionStmtVisitor(CurrenctFunctionDef->getBody());
           }
           else{
 
@@ -204,6 +205,27 @@ int main(int argc, const char **argv) {
   CommonOptionsParser OptionsParser(argc, argv, MyToolCategory);
   ClangTool Tool(OptionsParser.getCompilations(),
                  OptionsParser.getSourcePathList());
+  std::vector<std::unique_ptr<ASTUnit>> ASTs;
+  int Status = Tool.buildASTs(ASTs);
+  int ASTStatus = 0;
+  if (Status == 1) {
+    // Building ASTs failed.
+    return 1;
+  } else if (Status == 2) {
+    ASTStatus |= 1;
+    llvm::errs() << "Failed to build AST for some of the files, "
+                 << "results may be incomplete."
+                 << "\n";
+  } else {
+    assert(Status == 0 && "Unexpected status returned");
+  }
+  int count =0;
+  for(auto b = ASTs.begin(); b != ASTs.end(); b++){
+    count += 1;
+  }
+  llvm::outs() << "ASTcounts" << "\n";
+  llvm::outs() << count << "\n";
+
 
   return Tool.run(newFrontendActionFactory<FindNamedClassAction>().get());
 }
