@@ -1,18 +1,23 @@
+#include <stdio.h>
 // Declares clang::SyntaxOnlyAction.
 #include "clang/Tooling/CommonOptionsParser.h"
 // Declares llvm::cl::extrahelp.
 #include "llvm/Support/CommandLine.h"
 
+#include "clang/AST/ASTImporter.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
+#include "clang/ASTMatchers/ASTMatchFinder.h"
+#include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Tooling/Tooling.h"
 
 #include <queue>
 using namespace clang;
 using namespace clang::tooling;
 using namespace llvm;
+using namespace ast_matchers;
 
 // Apply a custom category to all command-line options so that they are the
 // only ones displayed.
@@ -32,14 +37,54 @@ static cl::extrahelp MoreHelp("\nMore help text...\n");
 //#define TARGET_FUNCTION_NAME "addFive"
 #define TARGET_FUNCTION_NAME "process_vm_rw"
 
-class FindNamedClassVisitor
-  : public RecursiveASTVisitor<FindNamedClassVisitor> {
+static std::map<std::string, FunctionDecl *> FunctionDeclWithDefinitnionMaps;
+static std::set<std::__cxx11::string> ResultGlobalVariableSet;
+static std::set<std::__cxx11::string> ResultUntraversedFunctionSet;
+
+class CollectFunctionDeclWithDefinitnionVisitor
+  : public RecursiveASTVisitor<CollectFunctionDeclWithDefinitnionVisitor>{
 public:
-  explicit FindNamedClassVisitor(ASTContext *Context)
+  explicit CollectFunctionDeclWithDefinitnionVisitor(ASTContext *Context)
+    : Context(Context) {}
+  bool VisitFunctionDecl(FunctionDecl *CurrentFunction) {
+    auto CurrenctFunctionDef = CurrentFunction->getDefinition();
+    auto CurrentName = CurrentFunction->getDeclName().getAsString();
+//    llvm::outs() << "[+]Collector: collecting " << CurrentName << "\n";
+    if (CurrenctFunctionDef){
+      if(CurrenctFunctionDef->hasBody()){
+        FunctionDeclWithDefinitnionMaps.insert(std::pair<std::string, FunctionDecl *>(CurrentName, CurrentFunction));
+      }
+      else{
+//      llvm::outs() << "[-]Collector: " << CurrentName << " has null Body" << "\n";
+      }
+    }
+    else{
+//      llvm::outs() << "[-]Collector: " << CurrentName << " has null declaration" << "\n";
+    }
+    return true;
+  }
+private:
+  ASTContext *Context;
+};
+
+
+class GetFunctionGlobalReferencesVisitor
+  : public RecursiveASTVisitor<GetFunctionGlobalReferencesVisitor> {
+public:
+  explicit GetFunctionGlobalReferencesVisitor(ASTContext *Context)
     : Context(Context) {}
   
+  FunctionDecl *FindFunctionDeclByName(std::string QueryName){
+    if(FunctionDeclWithDefinitnionMaps.find(QueryName) == FunctionDeclWithDefinitnionMaps.end()){
+//      llvm::outs() << "[-]Finder: " << QueryName << " is not existing" << "\n";
+      return nullptr;
+    }
+    else{
+      return FunctionDeclWithDefinitnionMaps[QueryName];
+    }
+  }
+  
   bool VisitFunctionDecl(FunctionDecl *CurrentFunction) {
-    Context->file
     if (CurrentFunction->getDeclName().getAsString() == TARGET_FUNCTION_NAME){
       FunctionQuene.push(CurrentFunction);
       MyFunctionDeclTraversal();
@@ -55,124 +100,119 @@ public:
     auto Body = CurrentStmt;
     for (Stmt::child_iterator it = Body->child_begin(); it != Body->child_end(); it++){
       Stmt *child = *it;
-      llvm::outs() << "Debuging" << "\n";
-      child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
-      llvm::outs() << "\n";
+//      llvm::outs() << "Debuging" << "\n";
+////      child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+//      llvm::outs() << "\n";
       //if (child->getStmtClass() == Stmt::DeclRefExprClass){
-      if (isa<DeclRefExpr>(child)){
-        //getReductionInit
-        auto *DRE = dyn_cast<DeclRefExpr>(child);
-        ValueDecl *VD = DRE->getDecl();
-        bool isFunction = VD->getType()->isFunctionType();
-        if(isFunction){
-          auto *FD =  dyn_cast<FunctionDecl>(VD);
-          llvm::outs() << "[+]Function" << "\n";
-          llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
-          child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
-          llvm::outs() << "\n";
-          FunctionQuene.push(FD);
-        }
-        else{
-          auto CurrentKind = VD->getKind();
-          llvm::outs() << "[+]Kind:" << "\n";
-          llvm::outs() << CurrentKind << "\n";
-          llvm::outs() << VD->getDeclKindName() << "\n";
-          switch(CurrentKind){
-            case 65: //EnumConstant
-              llvm::outs() << "[+]EnumConstant:" << "\n";
-              llvm::outs() << VD->getNameAsString() << "\n";
-              llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
-              child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
-              llvm::outs() << "\n";
-            break;
-            default:
-              auto *VarD = dyn_cast<VarDecl>(VD);
-              llvm::outs() << "[+]DeclName:" << "\n";
-              llvm::outs() << VD->getDeclKindName() << "\n";
-              if(VarD->hasGlobalStorage()){
-                llvm::outs() << "[+]Global Variable" << "\n";
-                llvm::outs() << "name: " << DRE->getNameInfo().getAsString() << "\n";
-                child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
-                llvm::outs() << "\n";
-              }
-            break;
+      if (child != nullptr){
+        if (isa<DeclRefExpr>(child)){
+          bool StoreToSet = false;
+          //getReductionInit
+          auto *DRE = dyn_cast<DeclRefExpr>(child);
+          ValueDecl *VD = DRE->getDecl();
+          bool isFunction = VD->getType()->isFunctionType();
+          std::__cxx11::string CurrentName = DRE->getNameInfo().getAsString();
+          if(isFunction){
+            auto *FD =  dyn_cast<FunctionDecl>(VD);
+//            llvm::outs() << "[+]Function" << "\n";
+//            llvm::outs() << "name: " << CurrentName << "\n";
+////            child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+//            llvm::outs() << "\n";
+            FunctionQuene.push(FD);
+            StoreToSet = true;
+          }
+          else{
+            auto CurrentKind = VD->getKind();
+//            llvm::outs() << "[+]Kind:" << "\n";
+//            llvm::outs() << CurrentKind << "\n";
+//            llvm::outs() << VD->getDeclKindName() << "\n";
+            switch(CurrentKind){
+              case 65: //EnumConstant
+//                llvm::outs() << "[+]EnumConstant:" << "\n";
+//                llvm::outs() << VD->getNameAsString() << "\n";
+//                llvm::outs() << "name: " << CurrentName << "\n";
+////                child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+//                llvm::outs() << "\n";
+                StoreToSet = true;
+              break;
+              default:
+                auto *VarD = dyn_cast<VarDecl>(VD);
+//                llvm::outs() << "[+]DeclName:" << "\n";
+//                llvm::outs() << VD->getDeclKindName() << "\n";
+                if(VarD->hasGlobalStorage()){
+//                  llvm::outs() << "[+]Global Variable" << "\n";
+//                  llvm::outs() << "name: " << CurrentName << "\n";
+////                  child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
+//                  llvm::outs() << "\n";
+                  StoreToSet = true;
+                }
+              break;
+            }
+          }
+
+          if (StoreToSet){
+            GlobalVariableSet.insert(CurrentName);
           }
         }
+      }
+      else{
+        continue;
       }
       MyFunctionStmtVisitor(*it);
     }
 
     return true;
   }
-  //bool MyFunctionStmtVisitor(Stmt *CurrentStmt)
-  //{
-  //  auto Body = CurrentStmt;
-  //  for (Stmt::child_iterator it = Body->child_begin(); it != Body->child_end(); it++){
-  //    Stmt *child = *it;
-  //    //if (child->getStmtClass() == Stmt::DeclRefExprClass){
-  //    if (isa<DeclRefExpr>(child)){
-  //      //getReductionInit
-  //      auto *DRE = dyn_cast<DeclRefExpr>(child);
-  //      ValueDecl *VD = DRE->getDecl();
-  //      auto *VarD = dyn_cast<VarDecl>(VD);
-  //      bool isGlobal = VarD->hasGlobalStorage();
-  //      if(isGlobal){
-  //        llvm::outs() << "[+]name: " << DRE->getNameInfo().getAsString() << "\n";
-  //        child->getBeginLoc().print(llvm::outs(), Context->getSourceManager());
-  //        llvm::outs() << "\n";
-  //        bool isFunction = VD->getType()->isFunctionType();
-  //        if(isFunction){
-  //          llvm::outs() << "Function" << "\n\n";
-  //          auto *FD =  dyn_cast<FunctionDecl>(VD);
-  //          FunctionQuene.push(FD);
-  //        }
-  //        else{
-  //          llvm::outs() << "Global Variable" << "\n\n";
-  //        }
-//
-  //      }
-  //    }
-  //    MyFunctionStmtVisitor(*it);
-  //  }
-//
-  //  return true;
-  //}
 
   bool MyFunctionDeclTraversal(){
     while(!FunctionQuene.empty()){
       FunctionDecl *CurrentFunction = FunctionQuene.front();
       FunctionQuene.pop();
       auto CurrentName = CurrentFunction->getDeclName().getAsString();
-      auto FoundPos = FunctionNameSet.find(CurrentName);
-      if(FoundPos == FunctionNameSet.end()){
+//      llvm::outs() << "[+]CurrentName:\n";
+//      llvm::outs() << CurrentName << "\n";
+      auto CheckedPos = FunctionNameSet.find(CurrentName);
+
+      if(CheckedPos == FunctionNameSet.end()){
         FunctionNameSet.insert(CurrentName);
-        llvm::outs() << "\n[+]Checking function " << CurrentName << "\n";
-        auto CurrenctFunctionDef = CurrentFunction->getDefinition();
-        if (CurrenctFunctionDef){
+//        llvm::outs() << "\n[+]Checking function " << CurrentName << "\n";
+        //getchar();
+        auto WithDefPos = FunctionDeclWithDefinitnionMaps.find(CurrentName);
+        if(WithDefPos != FunctionDeclWithDefinitnionMaps.end()){
+          CurrentFunction = FunctionDeclWithDefinitnionMaps[CurrentName];
+          auto CurrenctFunctionDef = CurrentFunction->getDefinition();
           if(CurrenctFunctionDef->hasBody()){
             MyFunctionStmtVisitor(CurrenctFunctionDef->getBody());
           }
           else{
-
-          llvm::outs() << "[-]" << CurrentName << " has null Body" << "\n";
+//            llvm::outs() << "[-]Visitor: " << CurrentName << " has null Body" << "\n";
           }
         }
         else{
-          llvm::outs() << "[-]" << CurrentName << " has null declaration" << "\n";
+          UntraversedFunctionSet.insert(CurrentName);
+//          llvm::outs() << "[-]Visitor: " << CurrentName << " not found" << "\n";
         }
       }
       else{
-        llvm::outs() << "[+]" << CurrentName << " has been checked" << "\n";
+//        llvm::outs() << "[+]" << CurrentName << " has been checked" << "\n";
       }
     }
     return true;
   }
 
+  const std::set<std::__cxx11::string>& getGlobalVariableSet(){
+    return GlobalVariableSet;
+  }
+  const std::set<std::__cxx11::string>& getUntraversedFunctionSet(){
+    return UntraversedFunctionSet;
+  }
+
 protected:
-// are there more than one instance of FindNamedClassVisitor? 
+// are there more than one instance of GetFunctionGlobalReferencesVisitor? 
   std::queue<FunctionDecl *> FunctionQuene;
   std::set<std::__cxx11::string> FunctionNameSet;
-
+  std::set<std::__cxx11::string> GlobalVariableSet;
+  std::set<std::__cxx11::string> UntraversedFunctionSet;
 private:
   ASTContext *Context;
 };
@@ -184,10 +224,15 @@ public:
 
   virtual void HandleTranslationUnit(clang::ASTContext &Context) {
     Visitor.TraverseDecl(Context.getTranslationUnitDecl());
+    llvm::outs() << "[+]AST Traverse Finished" << "\n";
+    const std::set<std::__cxx11::string>& TempGlobalVariableSet = Visitor.getGlobalVariableSet();
+    const std::set<std::__cxx11::string>& TempUntraversedFunctionSet = Visitor.getUntraversedFunctionSet();
+    ResultGlobalVariableSet.insert(TempGlobalVariableSet.begin(), TempGlobalVariableSet.end());
+    ResultUntraversedFunctionSet.insert(TempUntraversedFunctionSet.begin(), TempUntraversedFunctionSet.end());
   }
   
 private:
-  FindNamedClassVisitor Visitor;
+  GetFunctionGlobalReferencesVisitor Visitor;
 };
 
 class FindNamedClassAction : public clang::ASTFrontendAction {
@@ -200,11 +245,26 @@ public:
   
 };
 
+void DumpResult()
+{
+  llvm::outs() << "[+]Collected Names" << "\n";
+  for(const auto& Name:ResultGlobalVariableSet){
+    llvm::outs() << Name << ", ";
+  }
+  llvm::outs() << "\n";
+  llvm::outs() << "[-]Untraversed Functions" << "\n";
+  for(const auto& Name:ResultUntraversedFunctionSet){
+    llvm::outs() << Name << ", ";
+  }
+  llvm::outs() << "\n";
+}
+
 int main(int argc, const char **argv) {
 
   CommonOptionsParser OptionsParser(argc, argv, MyToolCategory);
   ClangTool Tool(OptionsParser.getCompilations(),
                  OptionsParser.getSourcePathList());
+
   std::vector<std::unique_ptr<ASTUnit>> ASTs;
   int Status = Tool.buildASTs(ASTs);
   int ASTStatus = 0;
@@ -219,13 +279,13 @@ int main(int argc, const char **argv) {
   } else {
     assert(Status == 0 && "Unexpected status returned");
   }
-  int count =0;
-  for(auto b = ASTs.begin(); b != ASTs.end(); b++){
-    count += 1;
+  for(const auto& CurUnit: ASTs){
+    CollectFunctionDeclWithDefinitnionVisitor Visitor(&CurUnit->getASTContext());
+    Visitor.TraverseDecl(CurUnit->getASTContext().getTranslationUnitDecl());
   }
-  llvm::outs() << "ASTcounts" << "\n";
-  llvm::outs() << count << "\n";
 
+  Tool.run(newFrontendActionFactory<FindNamedClassAction>().get());
 
-  return Tool.run(newFrontendActionFactory<FindNamedClassAction>().get());
+  DumpResult();
+  return 0;
 }
